@@ -99,7 +99,8 @@ public final class Room {
 
 	private List<Long> pingableUserIds;
 	private Set<Long> currentUserIds = new HashSet<>();
-
+	private boolean intended = false;
+	
 	Room(ChatHost host, int roomId, HttpClient httpClient, Map<String, String> cookies) {
 		this.roomId = roomId;
 		this.host = host;
@@ -202,9 +203,15 @@ public final class Room {
 				public void onOpen(Session session, EndpointConfig config) {
 					session.addMessageHandler(String.class, Room.this::handleChatEvent);
 				}
+				@override
+				public void onClose(Session session, CloseReason reason){
+					if(!intended)
+						respawn();
+				}
 				@Override
 				public void onError(Session session, Throwable thr) {
 					LOGGER.error("An error occured during the processing of a message in room {}", roomId, thr);
+					respawn();
 				}
 			}, configBuilder.build(), new URI(websocketUrl));
 		} catch (DeploymentException | URISyntaxException | IOException e) {
@@ -621,9 +628,45 @@ public final class Room {
 	}
 
 	void close() {
+		intended = true;
 		executor.shutdown();
 		eventExecutor.shutdown();
 		closeWebSocket();
+	}
+	
+	private int attempts = 0;
+    	public void respawn(){
+		System.out.println("Attempting to respawn");
+		try{
+		    Thread.sleep(100);
+		    initWebSocket();
+		    System.out.println("SUCCESS!!!");
+		}catch(NoAccessException | IOException e){
+		    persistentRespawn();
+		} catch (Exception e){
+		    e.printStackTrace();
+		    leave();
+		}
+	}
+
+	private void persistentRespawn(){
+		attempts++;
+		while(true) {
+		    try {
+			Thread.sleep((long)(10000f * (attempts <= 0 ? 1 : attempts >= 6 ? 6 : attempts == 1 ? 0.5f : attempts)));//The ternary ihere is to avoid problems with thread access
+		    } catch (InterruptedException ignore) {
+		    }
+
+		    if(breakRejoin)
+			break;
+		    try {
+			initWebSocket();
+		    } catch(Exception ex){
+			continue;
+		    }
+		    break;
+		}
+		attempts = 0;
 	}
 
 }
